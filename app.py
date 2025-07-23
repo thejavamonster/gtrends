@@ -1,10 +1,10 @@
+import streamlit as st
 import asyncio
 import aiohttp
 import feedparser
 import plotly.graph_objects as go
 import plotly.express as px
 import random
-import streamlit as st
 
 state_coords = {
     "AL": [32.806671, -86.791130], "AK": [61.370716, -152.404419],
@@ -41,7 +41,7 @@ headers = {
 
 async def fetch_trend(session, state_code):
     url = f"https://trends.google.com/trending/rss?geo=US-{state_code}"
-    for attempt in range(3):
+    for _ in range(3):
         await asyncio.sleep(random.uniform(1.0, 2.0))
         try:
             async with session.get(url, headers=headers) as response:
@@ -56,14 +56,15 @@ async def fetch_trend(session, state_code):
 async def get_all_trends():
     trends = {}
     async with aiohttp.ClientSession() as session:
-        for state_code in state_coords.keys():
-            code, trend = await fetch_trend(session, state_code)
+        tasks = [fetch_trend(session, state) for state in state_coords.keys()]
+        results = await asyncio.gather(*tasks)
+        for code, trend in results:
             trends[code] = trend
     return trends
 
 def generate_map(state_trends):
     unique_trends = list(set(state_trends.values()))
-    colors = px.colors.qualitative.Set3 * ((len(unique_trends) // len(px.colors.qualitative.Set3)) + 1)
+    colors = px.colors.qualitative.Safe * ((len(unique_trends) // len(px.colors.qualitative.Safe)) + 1)
 
     fig = go.Figure()
 
@@ -74,14 +75,13 @@ def generate_map(state_trends):
         colorscale=[[i/(len(unique_trends)-1), colors[i]] for i in range(len(unique_trends))],
         showscale=False,
         hovertext=[f"{code}: {state_trends[code]}" for code in state_trends],
-        hoverinfo='text',
-        marker_line_color='white',
-        marker_line_width=1,
+        hoverinfo='text'
     ))
 
     for code, trend in state_trends.items():
         lat, lon = state_coords[code]
         label = trend if len(trend) <= 14 else trend[:14] + "…"
+
         fig.add_trace(go.Scattergeo(
             lon=[lon], lat=[lat],
             text=label,
@@ -90,47 +90,25 @@ def generate_map(state_trends):
         ))
 
     fig.update_layout(
-        geo=dict(
-            scope='usa',
-            projection_scale=1,
-            center=dict(lat=39, lon=-98),
-            showcountries=False,
-            showcoastlines=False,
-            showland=True,
-            landcolor="lightgray",
-            lakecolor="white",
-        ),
-        margin=dict(l=0, r=0, t=0, b=0),
+        geo=dict(scope='usa', projection_type='albers usa'),
+        margin=dict(l=0, r=0, t=50, b=0),
         paper_bgcolor='white',
-        height=900,
-        width=1600
+        title_text="US Top Google Trends by State"
     )
+
     return fig
 
-st.set_page_config(layout="wide", page_title="US Top Google Trends by State")
+@st.cache_data(show_spinner=False)
+def get_trends_sync():
+    return asyncio.run(get_all_trends())
 
-st.markdown(
-    """
-    <style>
-        .main > div {
-            padding: 0 !important;
-            margin: 0 !important;
-            height: 100vh !important;
-            width: 100vw !important;
-        }
-        section[data-testid="stVerticalBlock"] {
-            padding: 0 !important;
-            margin: 0 !important;
-            height: 100vh !important;
-            width: 100vw !important;
-        }
-    </style>
-    """, unsafe_allow_html=True)
-
+st.set_page_config(layout="wide")
 st.title("US Top Google Trends by State")
 
-trends = asyncio.run(get_all_trends())
-
-fig = generate_map(trends)
-
-st.plotly_chart(fig, use_container_width=True, height=900)
+if st.button("Load Trends"):
+    with st.spinner("Fetching trends..."):
+        trends = get_trends_sync()
+        fig = generate_map(trends)
+        st.plotly_chart(fig, use_container_width=True)
+else:
+    st.info("Click the button to load trends.")
