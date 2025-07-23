@@ -5,7 +5,7 @@ import plotly.graph_objects as go
 import plotly.express as px
 import random
 import streamlit as st
-from datetime import datetime
+import time
 
 state_coords = {
     "AL": [32.806671, -86.791130], "AK": [61.370716, -152.404419],
@@ -35,15 +35,17 @@ state_coords = {
     "WI": [44.268543, -89.616508], "WY": [42.755966, -107.302490]
 }
 
+small_states = ["RI", "CT", "DE", "NJ", "MD", "MA", "NH", "VT"]
+
 headers = {
-    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)",
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/112.0 Safari/537.36",
     "Accept-Language": "en-US,en;q=0.9"
 }
 
 async def fetch_trend(session, state_code):
     url = f"https://trends.google.com/trending/rss?geo=US-{state_code}"
     for _ in range(3):
-        await asyncio.sleep(random.uniform(1, 2))
+        await asyncio.sleep(random.uniform(1.0, 2.0))
         try:
             async with session.get(url, headers=headers) as response:
                 text = await response.text()
@@ -57,51 +59,76 @@ async def fetch_trend(session, state_code):
 async def get_all_trends():
     trends = {}
     async with aiohttp.ClientSession() as session:
-        tasks = [fetch_trend(session, state) for state in state_coords.keys()]
+        tasks = [fetch_trend(session, state) for state in state_coords]
         results = await asyncio.gather(*tasks)
-    for code, trend in results:
-        trends[code] = trend
+        for code, trend in results:
+            trends[code] = trend
     return trends
 
-def generate_figure(trends):
-    unique_trends = list(set(trends.values()))
-    colors = px.colors.qualitative.Safe * ((len(unique_trends) // len(px.colors.qualitative.Safe)) + 1)
+def generate_map(state_trends):
+    unique_trends = list(set(state_trends.values()))
+    colors = px.colors.qualitative.Plotly * ((len(unique_trends) // len(px.colors.qualitative.Plotly)) + 1)
+
     fig = go.Figure()
+
     fig.add_trace(go.Choropleth(
-        locations=list(trends.keys()),
-        z=[unique_trends.index(trends[code]) for code in trends],
+        locations=list(state_trends.keys()),
+        z=[unique_trends.index(state_trends[code]) for code in state_trends],
         locationmode='USA-states',
-        colorscale=[[i/(len(unique_trends)-1), colors[i]] for i in range(len(unique_trends))],
+        colorscale=[[i/(len(unique_trends)-1 if len(unique_trends)>1 else 1), colors[i]] for i in range(len(unique_trends))],
         showscale=False,
-        hovertext=[f"{code}: {trends[code]}" for code in trends],
+        hovertext=[f"{code}: {state_trends[code]}" for code in state_trends],
         hoverinfo='text'
     ))
-    for code, trend in trends.items():
+
+    for code, trend in state_trends.items():
         lat, lon = state_coords[code]
         label = trend if len(trend) <= 14 else trend[:14] + "…"
-        fig.add_trace(go.Scattergeo(
-            lon=[lon], lat=[lat],
-            text=label,
-            mode='text',
-            textfont=dict(size=11, color='black', family="Arial Black")
-        ))
+
+        if code in small_states:
+            fig.add_annotation(
+                x=lon + 2, y=lat + 1,
+                xref='x', yref='y',
+                text=f"{code}: {label}",
+                showarrow=True,
+                arrowhead=2,
+                ax=lon, ay=lat,
+                font=dict(size=10, color="black"),
+                bgcolor="white"
+            )
+        else:
+            fig.add_trace(go.Scattergeo(
+                lon=[lon], lat=[lat],
+                text=label,
+                mode='text',
+                textfont=dict(size=11, color='black', family="Arial Black")
+            ))
+
     fig.update_layout(
         geo=dict(scope='usa'),
         title_text='US Top Google Trends by State',
         margin=dict(l=0, r=0, t=50, b=0),
-        paper_bgcolor='white'
+        paper_bgcolor='white',
+        height=800,
+        width=1400
     )
+
     return fig
+
+st.set_page_config(layout="wide")
 
 st.title("US Top Google Trends by State")
 
-placeholder = st.empty()
-placeholder.text("Loading trends...")
+status_text = st.empty()
 
-trends = asyncio.run(get_all_trends())
-fig = generate_figure(trends)
+state_trends = {}
 
-placeholder.empty()
-st.plotly_chart(fig, use_container_width=True)
+try:
+    state_trends = asyncio.run(get_all_trends())
+except Exception as e:
+    status_text.error(f"Failed to fetch trends: {e}")
+else:
+    status_text.text(f"Last updated: {time.ctime()}")
 
-st.markdown(f"Last updated: {datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S UTC')}")
+    fig = generate_map(state_trends)
+    st.plotly_chart(fig, use_container_width=True)
