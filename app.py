@@ -1,10 +1,16 @@
-import streamlit as st
+# app.py
 import asyncio
 import aiohttp
 import feedparser
 import plotly.graph_objects as go
-import plotly.express as px
+import json
+import os
+import time
+from distinctipy import distinctipy
+from flask import Flask, render_template_string
+import colorsys
 import random
+app = Flask(__name__)
 
 state_coords = {
     "AL": [32.806671, -86.791130], "AK": [61.370716, -152.404419],
@@ -33,16 +39,44 @@ state_coords = {
     "WA": [47.400902, -121.490494], "WV": [38.491226, -80.954456],
     "WI": [44.268543, -89.616508], "WY": [42.755966, -107.302490]
 }
+label_offsets = {
+    "RI": (3.5, 0),
+    "CT": (3.2, -1),
+    "NJ": (3.5, -0.3),
+    "DE": (3.5, -1),
+    "MD": (3.2, -1.5),
+    "MA": (3.2, 0.5),
+    "VT": (-3.2, 2.2),
+    "NH": (-1.5, 2.8)
+}
+
+
 
 headers = {
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/112.0 Safari/537.36",
     "Accept-Language": "en-US,en;q=0.9"
 }
 
+CACHE_FILE = "trends_cache.json"
+CACHE_EXPIRY = 1800  #30 m
+
+def get_text_color(rgb):
+    r, g, b = [int(x) for x in rgb.strip('rgb()').split(',')]
+    luminance = (0.299*r + 0.587*g + 0.114*b)
+    return 'white' if luminance < 128 else 'black'
+
+def generate_colors(n):
+    hues = [i / n for i in range(n)]
+    random.shuffle(hues)
+    colors = []
+    for h in hues:
+        r, g, b = colorsys.hls_to_rgb(h, random.uniform(0.5, 1.0), random.uniform(0.7,1.0))  #lightness, sat
+        colors.append(f'rgb({int(r*255)}, {int(g*255)}, {int(b*255)})')
+    return colors
+
 async def fetch_trend(session, state_code):
     url = f"https://trends.google.com/trending/rss?geo=US-{state_code}"
-    for _ in range(3):
-        await asyncio.sleep(random.uniform(1.0, 2.0))
+    for attempt in range(3):
         try:
             async with session.get(url, headers=headers) as response:
                 text = await response.text()
@@ -51,20 +85,39 @@ async def fetch_trend(session, state_code):
                     return state_code, feed.entries[0].title
         except:
             pass
+        await asyncio.sleep(3)
     return state_code, "No data"
 
 async def get_all_trends():
-    trends = {}
     async with aiohttp.ClientSession() as session:
-        tasks = [fetch_trend(session, state) for state in state_coords.keys()]
+        tasks = [fetch_trend(session, code) for code in state_coords.keys()]
         results = await asyncio.gather(*tasks)
-        for code, trend in results:
-            trends[code] = trend
-    return trends
+    return dict(results)
 
-def generate_map(state_trends):
-    unique_trends = list(set(state_trends.values()))
-    colors = px.colors.qualitative.Safe * ((len(unique_trends) // len(px.colors.qualitative.Safe)) + 1)
+from flask import Flask, render_template_string
+
+@app.route("/")
+def index():
+    cached = None
+    if os.path.exists(CACHE_FILE):
+        with open(CACHE_FILE, "r") as f:
+            data = json.load(f)
+        if time.time() - data.get("timestamp", 0) < CACHE_EXPIRY:
+            cached = data.get("trends")
+
+    if cached:
+        state_trends = cached
+    else:
+        state_trends = asyncio.run(get_all_trends())
+        with open(CACHE_FILE, "w") as f:
+            json.dump({"timestamp": time.time(), "trends": state_trends}, f)
+
+    unique_trends = [t for t in set(state_trends.values()) if t != "No data"]
+    if "No data" in state_trends.values():
+        unique_trends.append("No data")
+
+    colors = generate_colors(len(unique_trends)-1)
+    colors.append("rgb(200,200,200)")  #gray for "No data"
 
     fig = go.Figure()
 
@@ -82,33 +135,70 @@ def generate_map(state_trends):
         lat, lon = state_coords[code]
         label = trend if len(trend) <= 14 else trend[:14] + "…"
 
-        fig.add_trace(go.Scattergeo(
-            lon=[lon], lat=[lat],
-            text=label,
-            mode='text',
-            textfont=dict(size=11, color='black', family="Arial Black")
-        ))
+        if code in label_offsets:
+            lon_offset, lat_offset = label_offsets[code]
+
+            line_lon = lon + lon_offset
+            line_lat = lat + lat_offset
+
+            text_lon = line_lon + (0.3 if lon_offset > 0 else -0.3)
+            text_lat = line_lat + (0.2 if lat_offset > 0 else -0.2)
+
+            fig.add_trace(go.Scattergeo(
+                lon=[lon, line_lon],
+                lat=[lat, line_lat],
+                mode='lines',
+                line=dict(width=1, color='black'),
+                hoverinfo='none'
+            ))
+
+            fig.add_trace(go.Scattergeo(
+                lon=[text_lon], lat=[text_lat],
+                text=[label],
+                hovertext=[trend],  # full trend
+                mode='text',
+                textfont=dict(size=11, color='black', family="Arial Black"),
+                hoverinfo='text'
+            ))
+
+        else:
+            fig.add_trace(go.Scattergeo(
+                lon=[lon], lat=[lat],
+                text=[label],
+                hovertext=[trend],  # full trend
+                mode='text',
+                textfont=dict(size=11, color='black', family="Arial Black"),
+                hoverinfo='text'
+            ))
+
+
+
+
+
+
+
+
 
     fig.update_layout(
-        geo=dict(scope='usa', projection_type='albers usa'),
+        geo=dict(scope='usa'),
+        title_text='Top Google Trend by State',
         margin=dict(l=0, r=0, t=50, b=0),
         paper_bgcolor='white',
-        title_text="US Top Google Trends by State"
+        showlegend=False
     )
 
-    return fig
+    graph_html = fig.to_html(full_html=False)
 
-@st.cache_data(show_spinner=False)
-def get_trends_sync():
-    return asyncio.run(get_all_trends())
+    html_template = """
+    <html>
+    <head><title>US Google Trends by State</title></head>
+    <body>
+    {{ graph|safe }}
+    </body>
+    </html>
+    """
 
-st.set_page_config(layout="wide")
-st.title("US Top Google Trends by State")
+    return render_template_string(html_template, graph=graph_html)
 
-if st.button("Load Trends"):
-    with st.spinner("Fetching trends..."):
-        trends = get_trends_sync()
-        fig = generate_map(trends)
-        st.plotly_chart(fig, use_container_width=True)
-else:
-    st.info("Click the button to load trends.")
+if __name__ == "__main__":
+    app.run()
