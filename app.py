@@ -6,10 +6,10 @@ import plotly.graph_objects as go
 import json
 import os
 import time
-from distinctipy import distinctipy
-from flask import Flask, render_template_string
 import colorsys
 import random
+from flask import Flask, render_template_string
+
 app = Flask(__name__)
 
 state_coords = {
@@ -39,18 +39,12 @@ state_coords = {
     "WA": [47.400902, -121.490494], "WV": [38.491226, -80.954456],
     "WI": [44.268543, -89.616508], "WY": [42.755966, -107.302490]
 }
+
 label_offsets = {
-    "RI": (3.5, 0),
-    "CT": (3.2, -1),
-    "NJ": (3.5, -0.3),
-    "DE": (3.5, -1),
-    "MD": (3.2, -1.5),
-    "MA": (3.2, 0.5),
-    "VT": (-3.2, 2.2),
-    "NH": (-1.5, 2.8)
+    "RI": (3.5, 0), "CT": (3.2, -1), "NJ": (3.5, -0.3),
+    "DE": (3.5, -1), "MD": (3.2, -1.5), "MA": (3.2, 0.5),
+    "VT": (-3.2, 2.2), "NH": (-1.5, 2.8)
 }
-
-
 
 headers = {
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/112.0 Safari/537.36",
@@ -58,25 +52,20 @@ headers = {
 }
 
 CACHE_FILE = "trends_cache.json"
-CACHE_EXPIRY = 1800  #30 m
-
-def get_text_color(rgb):
-    r, g, b = [int(x) for x in rgb.strip('rgb()').split(',')]
-    luminance = (0.299*r + 0.587*g + 0.114*b)
-    return 'white' if luminance < 128 else 'black'
+CACHE_EXPIRY = 600  # 10 minutes
 
 def generate_colors(n):
     hues = [i / n for i in range(n)]
     random.shuffle(hues)
     colors = []
     for h in hues:
-        r, g, b = colorsys.hls_to_rgb(h, random.uniform(0.5, 1.0), random.uniform(0.7,1.0))  #lightness, sat
+        r, g, b = colorsys.hls_to_rgb(h, random.uniform(0.5, 1.0), random.uniform(0.7, 1.0))
         colors.append(f'rgb({int(r*255)}, {int(g*255)}, {int(b*255)})')
     return colors
 
 async def fetch_trend(session, state_code):
     url = f"https://trends.google.com/trending/rss?geo=US-{state_code}"
-    for attempt in range(3):
+    for _ in range(3):
         try:
             async with session.get(url, headers=headers) as response:
                 text = await response.text()
@@ -94,8 +83,6 @@ async def get_all_trends():
         results = await asyncio.gather(*tasks)
     return dict(results)
 
-from flask import Flask, render_template_string
-
 @app.route("/")
 def index():
     cached = None
@@ -112,35 +99,46 @@ def index():
         with open(CACHE_FILE, "w") as f:
             json.dump({"timestamp": time.time(), "trends": state_trends}, f)
 
-    unique_trends = [t for t in set(state_trends.values()) if t != "No data"]
-    if "No data" in state_trends.values():
-        unique_trends.append("No data")
+    normalized_trends = {code: trend.strip() if trend.strip() else "No data" for code, trend in state_trends.items()}
+    state_trends = normalized_trends
 
-    colors = generate_colors(len(unique_trends)-1)
-    colors.append("rgb(200,200,200)")  #gray for "No data"
+    unique_trends = sorted({t for t in state_trends.values() if t != "No data"})
+    unique_trends.append("No data")
+
+    colors = generate_colors(len(unique_trends) - 1)
+    colors.append("rgb(200,200,200)")
+
+    colorscale = []
+    n = len(colors)
+    for i, color in enumerate(colors):
+        fraction = i / (n - 1)
+        colorscale.append([fraction, color])
+        colorscale.append([min(fraction + 0.00001, 1), color])
+
+    z_values = [unique_trends.index(state_trends[code]) for code in state_trends]
 
     fig = go.Figure()
-
     fig.add_trace(go.Choropleth(
         locations=list(state_trends.keys()),
-        z=[unique_trends.index(state_trends[code]) for code in state_trends],
+        z=z_values,
         locationmode='USA-states',
-        colorscale=[[i/(len(unique_trends)-1), colors[i]] for i in range(len(unique_trends))],
+        colorscale=colorscale,
+        zmin=0,
+        zmax=n-1,
         showscale=False,
         hovertext=[f"{code}: {state_trends[code]}" for code in state_trends],
-        hoverinfo='text'
+        hoverinfo='text'  # Tooltips enabled on the map
     ))
 
     for code, trend in state_trends.items():
         lat, lon = state_coords[code]
         label = trend if len(trend) <= 14 else trend[:14] + "…"
 
+        hover = 'skip'  # Disable tooltip on text labels
         if code in label_offsets:
             lon_offset, lat_offset = label_offsets[code]
-
             line_lon = lon + lon_offset
             line_lat = lat + lat_offset
-
             text_lon = line_lon + (0.3 if lon_offset > 0 else -0.3)
             text_lat = line_lat + (0.2 if lat_offset > 0 else -0.2)
 
@@ -154,40 +152,52 @@ def index():
 
             fig.add_trace(go.Scattergeo(
                 lon=[text_lon], lat=[text_lat],
-                text=[label],
-                hovertext=[trend],  # full trend
+                text=[f"<span class='clickable-text'>{label}</span>"],
                 mode='text',
+                hoverinfo=hover,
                 textfont=dict(size=11, color='black', family="Arial Black"),
-                hoverinfo='text'
+                customdata=[trend]
             ))
-
         else:
             fig.add_trace(go.Scattergeo(
                 lon=[lon], lat=[lat],
-                text=[label],
-                hovertext=[trend],  # full trend
+                text=[f"<span class='clickable-text'>{label}</span>"],
                 mode='text',
+                hoverinfo=hover,
                 textfont=dict(size=11, color='black', family="Arial Black"),
-                hoverinfo='text'
+                customdata=[trend]
             ))
-
-
-
-
-
-
-
-
 
     fig.update_layout(
         geo=dict(scope='usa'),
-        title_text='Top Google Trend by State',
+        title_text='What is America googling right now? (updated every 10 minutes)',
         margin=dict(l=0, r=0, t=50, b=0),
         paper_bgcolor='white',
         showlegend=False
     )
 
     graph_html = fig.to_html(full_html=False)
+
+    # Inject CSS + JS for interactivity
+    graph_html += """
+<style>
+.clickable-text { cursor: pointer; text-decoration: underline; }
+</style>
+<script src="https://cdn.plot.ly/plotly-latest.min.js"></script>
+<script>
+document.addEventListener('DOMContentLoaded', function() {
+    var plot = document.querySelector('.js-plotly-plot');
+    plot.on('plotly_click', function(data) {
+        if (data.points && data.points[0] && data.points[0].customdata) {
+            var trend = data.points[0].customdata;
+            if (trend && trend !== 'No data') {
+                window.open('https://www.google.com/search?q=' + encodeURIComponent(trend), '_blank');
+            }
+        }
+    });
+});
+</script>
+"""
 
     html_template = """
     <html>
