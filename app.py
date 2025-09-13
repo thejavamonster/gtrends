@@ -62,42 +62,21 @@ def generate_colors(n):
         r, g, b = colorsys.hls_to_rgb(h, random.uniform(0.5, 1.0), random.uniform(0.7, 1.0))
         colors.append(f'rgb({int(r*255)}, {int(g*255)}, {int(b*255)})')
     return colors
-
-async def fetch_trend(session, state_code):
-    url = f"https://trends.google.com/trending/rss?geo=US-{state_code}"
-    for _ in range(3):
-        try:
-            async with session.get(url, headers=headers) as response:
-                text = await response.text()
-                feed = feedparser.parse(text)
-                if feed.entries:
-                    return state_code, feed.entries[0].title
-        except:
-            pass
-        await asyncio.sleep(3)
-    return state_code, "No data"
-
-async def get_all_trends():
-    async with aiohttp.ClientSession() as session:
-        tasks = [fetch_trend(session, code) for code in state_coords.keys()]
-        results = await asyncio.gather(*tasks)
-    return dict(results)
-
 @app.route("/")
 def index():
-    cached = None
+    # Only read from cache, never fetch trends here
+    state_trends = None
     if os.path.exists(CACHE_FILE):
         with open(CACHE_FILE, "r") as f:
             data = json.load(f)
-        if time.time() - data.get("timestamp", 0) < CACHE_EXPIRY:
-            cached = data.get("trends")
-
-    if cached:
-        state_trends = cached
+        # Accept cache even if slightly old, but warn if very old
+        state_trends = data.get("trends")
+        cache_age = time.time() - data.get("timestamp", 0)
     else:
-        state_trends = asyncio.run(get_all_trends())
-        with open(CACHE_FILE, "w") as f:
-            json.dump({"timestamp": time.time(), "trends": state_trends}, f)
+        cache_age = None
+
+        if not state_trends:
+            return "<h2>Sorry, no trend data is available. Please try again later.</h2>"
 
     normalized_trends = {code: trend.strip() if trend.strip() else "No data" for code, trend in state_trends.items()}
     state_trends = normalized_trends
@@ -169,35 +148,37 @@ def index():
             ))
 
     fig.update_layout(
-        geo=dict(scope='usa'),
+        geo=dict(scope='usa', bgcolor='white'),
         title_text='What is America googling right now? (updated every 10 minutes)',
         margin=dict(l=0, r=0, t=50, b=0),
         paper_bgcolor='white',
+        plot_bgcolor='white',
         showlegend=False
     )
 
     graph_html = fig.to_html(full_html=False)
-
     # Inject CSS + JS for interactivity
-    graph_html += """
-<style>
-.clickable-text { cursor: pointer; text-decoration: underline; }
-</style>
-<script src="https://cdn.plot.ly/plotly-latest.min.js"></script>
-<script>
-document.addEventListener('DOMContentLoaded', function() {
-    var plot = document.querySelector('.js-plotly-plot');
-    plot.on('plotly_click', function(data) {
-        if (data.points && data.points[0] && data.points[0].customdata) {
-            var trend = data.points[0].customdata;
-            if (trend && trend !== 'No data') {
-                window.open('https://www.google.com/search?q=' + encodeURIComponent(trend), '_blank');
-            }
-        }
-    });
-});
-</script>
-"""
+    graph_html += (
+        """
+        <style>
+        .clickable-text { cursor: pointer; text-decoration: underline; }
+        </style>
+        <script src=\"https://cdn.plot.ly/plotly-latest.min.js\"></script>
+        <script>
+        document.addEventListener('DOMContentLoaded', function() {
+            var plot = document.querySelector('.js-plotly-plot');
+            plot.on('plotly_click', function(data) {
+                if (data.points && data.points[0] && data.points[0].customdata) {
+                    var trend = data.points[0].customdata;
+                    if (trend && trend !== 'No data') {
+                        window.open('https://www.google.com/search?q=' + encodeURIComponent(trend), '_blank');
+                    }
+                }
+            });
+        });
+        </script>
+        """
+    )
 
     html_template = """
     <html>
@@ -209,6 +190,7 @@ document.addEventListener('DOMContentLoaded', function() {
     """
 
     return render_template_string(html_template, graph=graph_html)
+
 
 if __name__ == "__main__":
     app.run()
