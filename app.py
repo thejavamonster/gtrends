@@ -1,5 +1,5 @@
 from flask import request, abort
-
+import os
 # Set a secret token for cache updates (change this to a strong random value!)
 UPDATE_TOKEN = os.environ["UPDATE_TOKEN"]
 def fetch_trend_sync(state_code):
