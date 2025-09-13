@@ -1,4 +1,3 @@
-
 import os
 import json
 import time
@@ -217,6 +216,16 @@ def index():
 
     return render_template_string(html_template, graph=graph_html)
 
+@app.route("/update_cache", methods=["POST"])
+def update_cache_endpoint():
+    token = request.args.get("token")
+    if token != UPDATE_TOKEN:
+        abort(403)
+    print("Writing cache to:", os.path.abspath(CACHE_FILE))  # Debug print for Render logs
+    state_trends = get_all_trends_sync()
+    with open(CACHE_FILE, "w") as f:
+        json.dump({"timestamp": time.time(), "trends": state_trends}, f)
+    return {"status": "ok", "updated": True}
 
 if __name__ == "__main__":
     app.run()
