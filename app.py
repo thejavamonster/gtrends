@@ -34,14 +34,6 @@ def get_all_trends_sync():
         results = list(executor.map(fetch_trend_sync, state_coords.keys()))
     return dict(results)
 
-def update_cache_endpoint():
-    token = request.args.get("token")
-    if token != UPDATE_TOKEN:
-        abort(403)
-    state_trends = get_all_trends_sync()
-    with open(CACHE_FILE, "w") as f:
-        json.dump({"timestamp": time.time(), "trends": state_trends}, f)
-    return {"status": "ok", "updated": True}
 
 # Secure endpoint for external scheduler
 @app.route("/update_cache", methods=["POST"])
