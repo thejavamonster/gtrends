@@ -62,11 +62,13 @@ def get_all_trends_sync():
     return dict(results)
 
 def main():
-    print("Fetching Google Trends for all states...")
-    state_trends = get_all_trends_sync()
-    with open(CACHE_FILE, "w") as f:
-        json.dump({"timestamp": time.time(), "trends": state_trends}, f)
-    print("Cache updated.")
+    while True:
+        print("Fetching Google Trends for all states...")
+        state_trends = get_all_trends_sync()
+        with open(CACHE_FILE, "w") as f:
+            json.dump({"timestamp": time.time(), "trends": state_trends}, f)
+        print("Cache updated.")
+        time.sleep(600)  # Wait 10 minutes before next update
 
 if __name__ == "__main__":
     main()
