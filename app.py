@@ -1,12 +1,13 @@
+
+import os
+import json
+import time
+import random
+import colorsys
 import asyncio
 import aiohttp
 import feedparser
 import plotly.graph_objects as go
-import json
-import os
-import time
-import colorsys
-import random
 from flask import Flask, render_template_string, request, abort
 
 app = Flask(__name__)
@@ -35,53 +36,7 @@ def get_all_trends_sync():
     return dict(results)
 
 
-# Secure endpoint for external scheduler
-@app.route("/update_cache", methods=["POST"])
-def update_cache_endpoint():
-    token = request.args.get("token")
-    if token != UPDATE_TOKEN:
-        abort(403)
-    state_trends = get_all_trends_sync()
-    with open(CACHE_FILE, "w") as f:
-        json.dump({"timestamp": time.time(), "trends": state_trends}, f)
-    return {"status": "ok", "updated": True}
-from flask import request, abort
-import os
-# Set a secret token for cache updates (change this to a strong random value!)
-UPDATE_TOKEN = os.environ["UPDATE_TOKEN"]
-def fetch_trend_sync(state_code):
-    import requests
-    url = f"https://trends.google.com/trending/rss?geo=US-{state_code}"
-    for _ in range(3):
-        try:
-            response = requests.get(url, headers=headers, timeout=10)
-            feed = feedparser.parse(response.text)
-            if feed.entries:
-                return state_code, feed.entries[0].title
-        except Exception as e:
-            pass
-        time.sleep(3)
-    return state_code, "No data"
 
-def get_all_trends_sync():
-    from concurrent.futures import ThreadPoolExecutor
-    with ThreadPoolExecutor(max_workers=10) as executor:
-        results = list(executor.map(fetch_trend_sync, state_coords.keys()))
-    return dict(results)
-
-# app.py
-import asyncio
-import aiohttp
-import feedparser
-import plotly.graph_objects as go
-import json
-import os
-import time
-import colorsys
-import random
-from flask import Flask, render_template_string
-
-app = Flask(__name__)
 
 state_coords = {
     "AL": [32.806671, -86.791130], "AK": [61.370716, -152.404419],
