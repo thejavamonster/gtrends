@@ -1,0 +1,14 @@
+name: Update GTrends Cache
+
+on:
+  schedule:
+    - cron: '*/10 * * * *'  # every 10 minutes
+  workflow_dispatch:
+
+jobs:
+  update-cache:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Call update_cache endpoint
+        run: |
+          curl -X POST "https://gtrends.onrender.com/update_cache?token=nevsky"
