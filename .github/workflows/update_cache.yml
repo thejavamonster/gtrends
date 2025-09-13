@@ -11,4 +11,4 @@ jobs:
     steps:
       - name: Call update_cache endpoint
         run: |
-          curl -X POST "https://gtrends.onrender.com/update_cache?token=nevsky"
+          curl -X POST "https://gtrends-1heb.onrender.com/update_cache?token=nevsky"
