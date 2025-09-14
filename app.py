@@ -131,7 +131,8 @@ def index():
         zmax=n-1,
         showscale=False,
         hovertext=[f"{code}: {state_trends[code]}" for code in state_trends],
-        hoverinfo='text'  # Tooltips enabled on the map
+        hoverinfo='text',  # Tooltips enabled on the map
+        customdata=[state_trends[code] for code in state_trends],
     ))
 
     for code, trend in state_trends.items():
@@ -192,11 +193,23 @@ def index():
         <script>
         document.addEventListener('DOMContentLoaded', function() {
             var plot = document.querySelector('.js-plotly-plot');
+            var mouseDownPos = null;
+            plot.addEventListener('mousedown', function(e) {
+                mouseDownPos = {x: e.clientX, y: e.clientY};
+            });
             plot.on('plotly_click', function(data) {
-                if (data.points && data.points[0] && data.points[0].customdata) {
-                    var trend = data.points[0].customdata;
-                    if (trend && trend !== 'No data') {
-                        window.open('https://www.google.com/search?q=' + encodeURIComponent(trend), '_blank');
+                // Only trigger if mouse didn't move much between down and up (i.e., not a drag)
+                if (data.event && mouseDownPos) {
+                    var upPos = {x: data.event.clientX, y: data.event.clientY};
+                    var dx = Math.abs(upPos.x - mouseDownPos.x);
+                    var dy = Math.abs(upPos.y - mouseDownPos.y);
+                    if (dx < 5 && dy < 5) {
+                        if (data.points && data.points[0]) {
+                            var trend = data.points[0].customdata;
+                            if (trend && trend !== 'No data') {
+                                window.open('https://www.google.com/search?q=' + encodeURIComponent(trend), '_blank');
+                            }
+                        }
                     }
                 }
             });
