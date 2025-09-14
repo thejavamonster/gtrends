@@ -9,7 +9,12 @@ import feedparser
 import plotly.graph_objects as go
 from flask import Flask, render_template_string, request, abort
 
+from flask import send_file, send_from_directory
 app = Flask(__name__)
+
+@app.route('/favicon.ico')
+def favicon():
+    return send_from_directory('static', 'image.png', mimetype='image/png')
 
 # Set a secret token for cache updates (change this to a strong random value!)
 UPDATE_TOKEN = os.environ.get("UPDATE_TOKEN", "changeme123")
@@ -220,7 +225,10 @@ def index():
 
     html_template = """
     <html>
-    <head><title>US Google Trends by State</title></head>
+    <head>
+        <title>US Google Trends by State</title>
+        <link rel=\"icon\" type=\"image/png\" href=\"/favicon.ico\">
+    </head>
     <body>
     {{ graph|safe }}
     </body>
